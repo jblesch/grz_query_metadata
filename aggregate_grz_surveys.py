@@ -203,7 +203,7 @@ def main() -> None:
 
     unused_by_field: dict[str, list[str]] = {}
     index = wb.create_sheet("index")
-    index.append(["section", "field", "values used", "observations",
+    index.append(["section", "field", "values used",
                   "declared in schema", "declared but NEVER used", "sheet"])
     for c in index[1]:
         c.font = HEAD
@@ -219,11 +219,11 @@ def main() -> None:
         total_obs = sum(sum(d.values()) for d in per_grz.values())
         unused = [v for v in (decl or []) if v not in observed]
         name = sheet_name(label)
-        index.append([sec, label, len(observed), total_obs,
+        index.append([sec, label, len(observed),
                       len(decl) if decl else "", len(unused) if decl else "",
                       name])
         if decl and unused:
-            index[index.max_row][5].fill = UNUSED
+            index[index.max_row][4].fill = UNUSED
 
         ws = wb.create_sheet(name)
         header = ["value", *grzs, "TOTAL", "share"]

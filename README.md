@@ -186,7 +186,7 @@ missing.
 The workbook contains:
 
 - **summary** — submissions seen per GRZ, and a warning if script versions differ
-- **index** — every surveyed field, with values used, total observations, and —
+- **index** — every surveyed field, with how many distinct values were used and —
   with `--schema` — how many values the schema declares and how many of those
   were never used
 - **one sheet per field** — values down the rows, GRZs across the columns, plus
