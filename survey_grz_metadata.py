@@ -14,7 +14,7 @@ localCaseId, no file paths and no dates.
 Usage
 -----
     python survey_grz_metadata.py --db-url sqlite:////path/to/submission.db.sqlite
-    python survey_grz_metadata.py --db-url postgresql://user@host/grzdb --grz-id GRZK00123
+    python survey_grz_metadata.py --db-url postgresql://user@host/grzdb
 
     # read the URL from a grz config file instead
     python survey_grz_metadata.py --config-file /etc/grz/config.yaml
@@ -34,7 +34,7 @@ import re
 import sys
 from typing import Any
 
-SCRIPT_VERSION = "1.0.0"
+SCRIPT_VERSION = "1.1.0"
 
 # --------------------------------------------------------------------------
 # What to survey.
@@ -122,66 +122,12 @@ def collect(meta: dict, path: str):
 
 def derived_metrics(meta: dict, d: dict[str, collections.Counter]) -> None:
     donors = meta.get("donors") or []
-    d["donors_per_submission"][str(len(donors))] += 1
-
-    study_type = (meta.get("submission") or {}).get("genomicStudyType")
-    expected = {"single": 1, "duo": 2, "trio": 3}.get(study_type)
-    if expected is not None:
-        d["donorCount_matches_genomicStudyType"][
-            "match" if len(donors) == expected else f"mismatch ({study_type} vs {len(donors)} donors)"
-        ] += 1
-
-    n_index = sum(1 for dn in donors if dn.get("relation") == "index")
-    d["index_donors_per_submission"][str(n_index)] += 1
-
-    # --- VCF coverage: would the proposed per-donor VCF rule reject this? ---
-    for donor in donors:
-        labdata = donor.get("labData") or []
-        types = {
-            f.get("fileType")
-            for ld in labdata
-            for f in ((ld.get("sequenceData") or {}).get("files") or [])
-        }
-        has_raw = bool(types & {"bam", "fastq"})
-        has_vcf = "vcf" in types
-        if has_raw:
-            d["donor_raw_reads_has_vcf"]["yes" if has_vcf else "NO - would be rejected"] += 1
-        elif types:
-            d["donor_raw_reads_has_vcf"]["no raw reads submitted"] += 1
 
     for ld in (ld for dn in donors for ld in (dn.get("labData") or [])):
         # --- tissueTypeId: does it look like a BTO identifier? ---
         tid = ld.get("tissueTypeId")
         if tid is not None:
             d["tissueTypeId_is_BTO_format"]["yes" if BTO_ID.match(str(tid)) else "no"] += 1
-
-        files = (ld.get("sequenceData") or {}).get("files")
-        if files is not None:
-            if not files:
-                d["labData_with_empty_files_list"]["empty"] += 1
-            # --- readLength present on bam/fastq, as the existing rule demands ---
-            for f in files:
-                if f.get("fileType") in {"bam", "fastq"}:
-                    d["readLength_present_on_bam_fastq"][
-                        "yes" if f.get("readLength") is not None else "MISSING"
-                    ] += 1
-
-    # --- documented but unenforced: at most one BED per submission ---
-    all_files = [
-        f
-        for dn in donors
-        for ld in (dn.get("labData") or [])
-        for f in ((ld.get("sequenceData") or {}).get("files") or [])
-    ]
-    n_bed = sum(1 for f in all_files if f.get("fileType") == "bed")
-    if n_bed:
-        d["bed_files_per_submission"][str(n_bed)] += 1
-
-    paths = [f.get("filePath") for f in all_files if f.get("filePath")]
-    if paths:
-        d["duplicate_filePaths_in_submission"][
-            "yes" if len(paths) != len(set(paths)) else "no"
-        ] += 1
 
 
 # --------------------------------------------------------------------------
@@ -218,7 +164,10 @@ def main() -> None:
     src = ap.add_mutually_exclusive_group(required=True)
     src.add_argument("--db-url", help="SQLAlchemy URL, e.g. sqlite:///... or postgresql://...")
     src.add_argument("--config-file", help="grz config file containing db.database_url")
-    ap.add_argument("--grz-id", default="UNKNOWN", help="your GRZ id, e.g. GRZK00123")
+    ap.add_argument("--grz-id", default=None,
+                    help="optional label for your site, e.g. GRZK00123. Only used to name "
+                         "the report and label its column during aggregation; if omitted, "
+                         "the report filename is used instead.")
     ap.add_argument("--out", default=None, help="output file (default: grz-survey-<grzid>-<date>.json)")
     ap.add_argument(
         "--redact-freetext",
@@ -291,7 +240,10 @@ def main() -> None:
         "derived": dump(sorted(set(counters) - set(ENUM_FIELDS) - set(FREETEXT_FIELDS))),
     }
 
-    out = args.out or f"grz-survey-{args.grz_id}-{report['generated']}.json"
+    out = args.out or (
+        f"grz-survey-{args.grz_id}-{report['generated']}.json"
+        if args.grz_id else f"grz-survey-{report['generated']}.json"
+    )
     with open(out, "w", encoding="utf-8") as fh:
         json.dump(report, fh, indent=2, ensure_ascii=False, sort_keys=True)
 

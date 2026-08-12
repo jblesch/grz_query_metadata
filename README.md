@@ -4,18 +4,23 @@ Survey which metadata values are actually used across GRZ submissions, so that
 proposed changes to the [GRZ metadata schema](https://github.com/BfArM-MVH/MVGenomseq_GRZ)
 can be decided on evidence rather than assumption.
 
+The proposal these questions are aimed at is
+[MVGenomseq PR #1 — *Revise GRZ metadata schema for 2.0.0*](https://github.com/jblesch/MVGenomseq/pull/1),
+called **the schema proposal** throughout this README.
+
 Each GRZ runs `survey_grz_metadata.py` against its own submission database and
 returns a small JSON report. Those reports are combined with
 `aggregate_grz_surveys.py` into a single spreadsheet.
 
 Typical questions this answers:
 
-- How often is `wes` used instead of its synonym `wxs`? Is either safe to drop?
+- How often is `wxs` used? It has been discussed if wxs is really needed, also because relationship to wes is unclear
 - How many submissions use an ontology other than BRENDA in `tissueOntology`?
 - Is `reverse` in `sequencingLayout` ever used at all?
-- How many donors would a proposed "a VCF must accompany raw reads" rule reject?
-- Do the free-text `libraryPrepKit` and `sequencerModel` values map onto a
-  proposed controlled vocabulary, and what share would fail?
+- Do the free-text `libraryPrepKit` and `sequencerModel` values in use today map
+  onto the controlled vocabularies **proposed in the schema proposal**, and what
+  share of real submissions would fail if those vocabularies were adopted as
+  drafted? The unmatched values are the list of entries still to be added.
 
 ## What the script does to your database
 
@@ -64,22 +69,16 @@ No installation step. Both files are standalone scripts.
 
 ```bash
 # SQLite: a plain path is fine
-python survey_grz_metadata.py \
-    --db-url /path/to/submission.db.sqlite \
-    --grz-id GRZK00123
+python survey_grz_metadata.py --db-url /path/to/submission.db.sqlite
 
 # PostgreSQL
-python survey_grz_metadata.py \
-    --db-url postgresql://user@host/grzdb \
-    --grz-id GRZK00123
+python survey_grz_metadata.py --db-url postgresql://user@host/grzdb
 
 # or take the URL from your grz config file
-python survey_grz_metadata.py \
-    --config-file /etc/grz/config.yaml \
-    --grz-id GRZK00123
+python survey_grz_metadata.py --config-file /etc/grz/config.yaml
 ```
 
-This writes `grz-survey-<grz-id>-<date>.json` in the working directory.
+This writes `grz-survey-<date>.json` in the working directory.
 
 Useful flags:
 
@@ -87,11 +86,25 @@ Useful flags:
 |---|---|
 | `--redact-freetext` | report counts only for free-text fields, not their values |
 | `--out FILE` | write somewhere other than the default filename |
-| `--max-freetext-values N` | cap distinct values reported per field (default 500) |
+| `--grz-id ID` | label the report with your site id (optional, see below) |
+| `--max-freetext-values N` | keep only the N most common values per field (default 500) |
 
-**Please run the tagged release** rather than the tip of the branch, so every
-GRZ reports with the same script. The aggregation step flags it if reports were
-produced by different versions.
+**`--grz-id` is optional.** It does nothing except name the report file and label
+your column in the aggregated workbook. If you omit it, the report is named after
+the date alone and the aggregation step falls back to the filename, so each site
+still gets its own column. Pass it only if you want the columns labelled with
+real GRZ ids rather than filenames.
+
+**`--max-freetext-values` is a size cap, not a sampling limit.** Everything is
+counted; the flag only limits how much of the tail is written out. Values are
+sorted by frequency and the N most common are kept, so the field's `_total` and
+`_distinct` figures stay exact regardless, and any field that lost values is
+marked `"_truncated": true`. The default of 500 exists because a free-text field
+like `labDataName` can hold thousands of one-off values that would bloat the
+report without changing any decision — the rare tail is by definition not what
+a controlled vocabulary needs to cover. Raise it if you want the complete list;
+`--max-freetext-values 0` is not useful, since it would keep nothing.
+
 
 ## Aggregating the reports
 
@@ -110,10 +123,72 @@ python aggregate_grz_surveys.py grz-survey-*.json -o schema-usage.xlsx \
     --vocab labData.libraryPrepKit=path/to/library-preparation-kit-retail-name.json
 ```
 
+Both vocabulary files come from the schema proposal itself — they are added by
+[PR #1](https://github.com/jblesch/MVGenomseq/pull/1) and live in
+`GRZ/vocabularies/` on its `dev` branch:
+
+| File | Compared against |
+|---|---|
+| [`GRZ/vocabularies/instrument-model.json`](https://github.com/jblesch/MVGenomseq/blob/dev/GRZ/vocabularies/instrument-model.json) | the free-text `sequencerModel` values in use today |
+| [`GRZ/vocabularies/library-preparation-kit-retail-name.json`](https://github.com/jblesch/MVGenomseq/blob/dev/GRZ/vocabularies/library-preparation-kit-retail-name.json) | the free-text `libraryPrepKit` values in use today |
+
+So the coverage figure answers a question about the proposal specifically: if
+these two fields became closed enums as drafted, what share of what the GRZs
+have already submitted would still validate.
+
+### Finding the values nobody uses
+
+The survey counts what it sees, so an enum value that never occurs is simply
+absent from the report. That is a problem, because "never used by anyone" is
+precisely the finding that justifies dropping a value. Pass the schema and those
+gaps are filled in:
+
+```bash
+python aggregate_grz_surveys.py grz-survey-*.json -o schema-usage.xlsx \
+    --schema path/to/grz-schema.json
+```
+
+This reads the enum declared at each surveyed path — following `$ref` into
+`GRZ/vocabularies/` where needed — and adds a row at zero for every declared
+value no GRZ used. Each sheet then shows the complete vocabulary instead of only
+the part in use. Rows are colour-coded:
+
+| Colour | Meaning |
+|---|---|
+| blue | declared in the schema, **never used by anyone** — a candidate for removal |
+| amber | outside the proposed vocabulary, where `--vocab` was also given |
+
+A value present in the data but absent from the schema is **not** flagged as a
+problem. Submissions are validated by grz-tools when they arrive, so such a value
+was valid against the schema version in force at the time; the database simply
+spans several versions. The `declared in schema` column records it as
+`no - predates this version` and nothing is highlighted. It is still worth a
+glance for one reason: if a whole workbook is full of them, the wrong schema file
+was passed.
+
+Every sheet ends with a `declared but never used (8 of 10)` line naming them, the
+**index** sheet carries a per-field count, and the same summary goes to the
+console:
+
+```
+checked 20 enum(s) against grz-schema.json: 75 declared value(s) never used
+  labData.libraryType: panel, panel_lr, wes_lr, wgs, wgs_lr, wxs_lr, other, unknown
+  labData.sequencingLayout: single-end, reverse, other
+```
+
+Pass the schema the submissions were actually **validated against** — that is
+`GRZ/grz-schema.json` on `main`, not the schema proposal. The job here is to
+measure the vocabulary in force; measuring against the proposal is what `--vocab`
+does. `--schema` and `--vocab` can be given together and answer different halves
+of the question: which existing values are dead, and which proposed values are
+missing.
+
 The workbook contains:
 
 - **summary** — submissions seen per GRZ, and a warning if script versions differ
-- **index** — every surveyed field, with its distinct-value and observation counts
+- **index** — every surveyed field, with values used, total observations, and —
+  with `--schema` — how many values the schema declares and how many of those
+  were never used
 - **one sheet per field** — values down the rows, GRZs across the columns, plus
   totals and share of all observations
 
@@ -142,15 +217,7 @@ highlighted rows are the list of values still to be mapped or added.
 
 | Check | Question it answers |
 |---|---|
-| `donor_raw_reads_has_vcf` | how many donors with BAM/FASTQ have no VCF |
 | `tissueTypeId_is_BTO_format` | how many identifiers match `^BTO:[0-9]{7}$` |
-| `donors_per_submission` | are there submissions with more than three donors |
-| `donorCount_matches_genomicStudyType` | does the declared study type match the donor count |
-| `index_donors_per_submission` | are there submissions with no index, or several |
-| `readLength_present_on_bam_fastq` | is the existing conditional rule actually satisfied |
-| `bed_files_per_submission` | is the documented "only one BED" rule respected |
-| `duplicate_filePaths_in_submission` | is the same file declared more than once |
-| `labData_with_empty_files_list` | how often is `files` present but empty |
 
 ## Adding a field
 
