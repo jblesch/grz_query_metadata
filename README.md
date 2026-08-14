@@ -8,9 +8,9 @@ The proposal these questions are aimed at is
 [MVGenomseq PR #1 — *Revise GRZ metadata schema for 2.0.0*](https://github.com/jblesch/MVGenomseq/pull/1),
 called **the schema proposal** throughout this README.
 
-Each GRZ runs `survey_grz_metadata.py` against its own submission database and
+Each GRZ runs `grz-survey-metadata` against its own submission database and
 returns a small JSON report. Those reports are combined with
-`aggregate_grz_surveys.py` into a single spreadsheet.
+`grz-aggregate-surveys` into a single spreadsheet.
 
 Typical questions this answers:
 
@@ -22,9 +22,9 @@ Typical questions this answers:
   share of real submissions would fail if those vocabularies were adopted as
   drafted? The unmatched values are the list of entries still to be added.
 
-## What the script does to your database
+## What the survey does to your database
 
-**It reads. It never writes.** The script issues exactly one statement:
+**It reads. It never writes.** The survey issues exactly one statement:
 
 ```sql
 SELECT id, submission_metadata FROM submissions
@@ -37,73 +37,127 @@ same code runs unchanged against SQLite and PostgreSQL.
 
 The report contains **counts of values**, plus the distinct values found in
 technical fields such as kit and instrument names — that is what makes the
-vocabulary comparison possible.
+vocabulary comparison possible. It also carries your own
+`submission.genomicDataCenterId`, which is how the report labels itself; that is
+your GRZ id, not anyone's patient or institution.
 
 The following are never read and never appear in the output:
 
-| Never touched |
-|---|
-| `tanG` |
-| `donorPseudonym`, `pseudonym` |
-| `localCaseId` |
-| `filePath`, `fileChecksum` |
-| any date field |
-| submission ids |
+| Never touched | |
+|---|---|
+| `tanG` | |
+| `donorPseudonym`, `pseudonym` | |
+| `localCaseId` | |
+| `submitterId` | identifies the submitting institution under §293 SGB V |
+| `clinicalDataNodeId` | the KDK, not us |
+| `filePath`, `fileChecksum` | |
+| any date field | |
+| submission ids | the database's own row ids |
 
-One field deserves a look before you send anything: `labDataName` is free text
-and could in principle contain something identifying, for example
-`"Blut DNA Müller"`. Run with `--redact-freetext` to report only counts for all
-free-text fields, or simply open the JSON and check. The script reminds you on
-every run.
+**Open the report and read it before you send it.** The file is small,
+human-readable JSON, and the only part that is not a plain count is the
+`freetext_fields` section. One field there deserves particular attention:
+`labDataName` is free text and could in principle contain something identifying,
+for example `"Blut DNA Müller"`. Delete anything that should not leave your site
+— removing values from the JSON does not break the aggregation. The tool prints
+this reminder on every run.
 
-## Requirements
+## Installation
 
-- Python 3.11+
-- `sqlalchemy` — already present in the `grz_tools` environment
-- `PyYAML` — only if you use `--config-file`
-- `openpyxl` — only for the aggregation step, which the coordinator runs
+This is a Python package managed with [uv](https://docs.astral.sh/uv/). uv is
+the only thing you need to install yourself; it fetches a suitable Python
+(3.12+) and the dependencies (`sqlalchemy`, `PyYAML`, `odfpy`) into an
+isolated environment, so nothing is added to your `grz_tools` installation.
 
-No installation step. Both files are standalone scripts.
+The quickest way to run a pinned version without installing anything
+permanently:
+
+```bash
+uvx --from git+https://github.com/jblesch/grz_query_metadata@v1.1.0 grz-survey-metadata --help  # x-release-please-version
+```
+
+To install the two commands onto your PATH instead:
+
+```bash
+uv tool install git+https://github.com/jblesch/grz_query_metadata@v1.1.0  # x-release-please-version
+```
+
+(The `x-release-please-version` markers keep the pinned tag current: every
+release bumps these lines automatically.)
+
+Or from a clone, which is also what you want when working on the code:
+
+```bash
+git clone https://github.com/jblesch/grz_query_metadata
+cd grz_query_metadata
+uv sync
+uv run grz-survey-metadata --help
+```
+
+Both commands print the package version with `--version`, and that same version
+is recorded in every report, so a report can always be traced back to the tag
+that produced it.
 
 ## Running the survey
 
+Point it at your database. That is the whole of it:
+
 ```bash
 # SQLite: a plain path is fine
-python survey_grz_metadata.py --db-url /path/to/submission.db.sqlite
+grz-survey-metadata --db-url /path/to/submission.db.sqlite
 
 # PostgreSQL
-python survey_grz_metadata.py --db-url postgresql://user@host/grzdb
+grz-survey-metadata --db-url postgresql://user@host/grzdb
 
 # or take the URL from your grz config file
-python survey_grz_metadata.py --config-file /etc/grz/config.yaml
+grz-survey-metadata --config-file /etc/grz/config.yaml
 ```
 
-This writes `grz-survey-<date>.json` in the working directory.
+Prefix these with `uv run` (in a clone) or `uvx --from git+https://github.com/jblesch/grz_query_metadata`
+(without installing) if you did not `uv tool install`.
 
-Useful flags:
+This writes `grz-survey-GRZK00123-<date>.json` in the working directory.
 
 | Flag | Effect |
 |---|---|
-| `--redact-freetext` | report counts only for free-text fields, not their values |
+| `--db-url URL` | the database, as a SQLAlchemy URL or a path to a SQLite file |
+| `--config-file FILE` | take the URL from a grz config file instead |
 | `--out FILE` | write somewhere other than the default filename |
-| `--grz-id ID` | label the report with your site id (optional, see below) |
-| `--max-freetext-values N` | keep only the N most common values per field (default 500) |
+| `--grz-id ID` | override the site id — see below, normally unnecessary |
 
-**`--grz-id` is optional.** It does nothing except name the report file and label
-your column in the aggregated workbook. If you omit it, the report is named after
-the date alone and the aggregation step falls back to the filename, so each site
-still gets its own column. Pass it only if you want the columns labelled with
-real GRZ ids rather than filenames.
+### Where the site id comes from
 
-**`--max-freetext-values` is a size cap, not a sampling limit.** Everything is
-counted; the flag only limits how much of the tail is written out. Values are
-sorted by frequency and the N most common are kept, so the field's `_total` and
-`_distinct` figures stay exact regardless, and any field that lost values is
-marked `"_truncated": true`. The default of 500 exists because a free-text field
-like `labDataName` can hold thousands of one-off values that would bloat the
-report without changing any decision — the rare tail is by definition not what
-a controlled vocabulary needs to cover. Raise it if you want the complete list;
-`--max-freetext-values 0` is not useful, since it would keep nothing.
+You do not type it. Every submission records the GRZ that received it in
+`submission.genomicDataCenterId` (`GRZXXXnnn`, e.g. `GRZK00123`), so the survey
+reads it out of the data, names the report after it and labels your column with
+it. A retyped id is the one part of the report that could be wrong; a derived
+one cannot be.
+
+The run prints what it concluded, and the report records it under
+`grz_id_source`, which the aggregated spreadsheet shows in an **id from** column
+so the coordinator can see which reports were labelled by hand:
+
+```
+reporting as GRZK00123 (from submission/genomicDataCenterId)
+```
+
+`--grz-id` exists for the two cases where the data cannot answer. Both stop the
+run rather than guessing:
+
+| Situation | What happens |
+|---|---|
+| no submission records an id | error; pass `--grz-id` to label the report yourself |
+| submissions from **more than one** GRZ | error listing each id and how many submissions carry it; pass `--grz-id` to say which this report is for |
+
+The second is worth a look before you reach for the flag: a handful of
+submissions bearing another GRZ's id in your database is a finding in itself,
+which is why the error prints the counts rather than silently picking the
+majority.
+
+Every distinct value of every surveyed field is reported, with no cap. A
+free-text field such as `labDataName` can hold thousands of one-off values, so
+the report is not always small — but a truncated one would understate exactly
+the long tail a controlled vocabulary has to account for.
 
 
 ## Aggregating the reports
@@ -111,14 +165,19 @@ a controlled vocabulary needs to cover. Raise it if you want the complete list;
 Run by whoever collects the reports:
 
 ```bash
-python aggregate_grz_surveys.py grz-survey-*.json -o schema-usage.xlsx
+grz-aggregate-surveys grz-survey-*.json -o schema-usage.ods
 ```
+
+The output is an OpenDocument spreadsheet, which LibreOffice, Excel, Numbers and
+Google Sheets all open, and which `pandas.read_excel(..., engine="odf")` reads
+directly. Counts are written as numbers rather than text, so sorting and summing
+in the sheet work as expected.
 
 To also measure how well a proposed controlled vocabulary would cover the
 free-text values actually in use:
 
 ```bash
-python aggregate_grz_surveys.py grz-survey-*.json -o schema-usage.xlsx \
+grz-aggregate-surveys grz-survey-*.json -o schema-usage.ods \
     --vocab labData.sequencerModel=path/to/instrument-model.json \
     --vocab labData.libraryPrepKit=path/to/library-preparation-kit-retail-name.json
 ```
@@ -133,8 +192,8 @@ Both vocabulary files come from the schema proposal itself — they are added by
 | [`GRZ/vocabularies/library-preparation-kit-retail-name.json`](https://github.com/jblesch/MVGenomseq/blob/dev/GRZ/vocabularies/library-preparation-kit-retail-name.json) | the free-text `libraryPrepKit` values in use today |
 
 So the coverage figure answers a question about the proposal specifically: if
-these two fields became closed enums as drafted, what share of what the GRZs
-have already submitted would still validate.
+these two fields became closed enums as drafted, what share of what the
+Leistungserbringer have already submitted to the GRZs would still validate.
 
 ### Finding the values nobody uses
 
@@ -144,7 +203,7 @@ precisely the finding that justifies dropping a value. Pass the schema and those
 gaps are filled in:
 
 ```bash
-python aggregate_grz_surveys.py grz-survey-*.json -o schema-usage.xlsx \
+grz-aggregate-surveys grz-survey-*.json -o schema-usage.ods \
     --schema path/to/grz-schema.json
 ```
 
@@ -153,17 +212,21 @@ This reads the enum declared at each surveyed path — following `$ref` into
 value no GRZ used. Each sheet then shows the complete vocabulary instead of only
 the part in use. Rows are colour-coded:
 
-| Colour | Meaning |
-|---|---|
-| blue | declared in the schema, **never used by anyone** — a candidate for removal |
-| amber | outside the proposed vocabulary, where `--vocab` was also given |
+| Colour | Meaning | Also readable from |
+|---|---|---|
+| blue | declared in the schema, **never used by anyone** — a candidate for removal | `TOTAL` is 0 |
+| amber | outside the proposed vocabulary, where `--vocab` was also given | `in proposed vocabulary` is `NO` |
+
+The colour is emphasis, never the only carrier of a finding: every highlighted
+row can be found from a column instead, so the sheet keeps its meaning if it is
+exported to CSV or read by a script.
 
 A value present in the data but absent from the schema is **not** flagged as a
 problem. Submissions are validated by grz-tools when they arrive, so such a value
 was valid against the schema version in force at the time; the database simply
 spans several versions. The `declared in schema` column records it as
 `no - predates this version` and nothing is highlighted. It is still worth a
-glance for one reason: if a whole workbook is full of them, the wrong schema file
+glance for one reason: if a whole file is full of them, the wrong schema file
 was passed.
 
 Every sheet ends with a `declared but never used (8 of 10)` line naming them, the
@@ -183,9 +246,10 @@ does. `--schema` and `--vocab` can be given together and answer different halves
 of the question: which existing values are dead, and which proposed values are
 missing.
 
-The workbook contains:
+The `.ods` contains:
 
-- **summary** — submissions seen per GRZ, and a warning if script versions differ
+- **summary** — submissions seen per GRZ, where each GRZ's id came from, and a
+  warning if script versions differ
 - **index** — every surveyed field, with how many distinct values were used and —
   with `--schema` — how many values the schema declares and how many of those
   were never used
@@ -221,12 +285,73 @@ highlighted rows are the list of values still to be mapped or added.
 
 ## Adding a field
 
-Both dictionaries near the top of `survey_grz_metadata.py` map a label to a
-path through the metadata document, where `[]` descends into an array:
+Both dictionaries in [`src/grz_query_metadata/fields.py`](src/grz_query_metadata/fields.py)
+map a label to a path through the metadata document, where `[]` descends into
+an array:
 
 ```python
 "labData.sequencingLayout": "donors[]/labData[]/sequencingLayout",
 ```
 
-Add an entry and it is counted. Bump `SCRIPT_VERSION` so that reports produced
-before and after are distinguishable.
+Add an entry and it is counted — by the survey and, when `--schema` is given,
+by the schema walk as well, since both read the same dictionary. There is no
+version constant to bump: the report records the package version, which
+release-please derives from the commit history (see below).
+
+## Development
+
+```
+src/grz_query_metadata/
+  fields.py     the metadata paths that are surveyed — the one place a field is declared
+  survey.py     counts values in a submission database        → grz-survey-metadata
+  schema.py     reads the enums declared in a GRZ JSON Schema
+  aggregate.py  builds the spreadsheet from the JSON reports  → grz-aggregate-surveys
+  ods.py        a thin writer over odfpy: sheets, rows, cell styles
+tests/
+```
+
+Inside `aggregate.py`, each sheet is produced by one function whose docstring
+states exactly what that sheet contains and which columns appear under which
+option:
+
+| Function | Produces |
+|---|---|
+| `summary_rows(reports)` | the **summary** sheet |
+| `index_rows(fields)` | the **index** sheet |
+| `field_rows(field)` | one field's sheet, `field_header(field)` being its columns |
+| `build_spreadsheet(reports, fields)` | all of the above, in order |
+
+They return lists of `ods.Row`, not spreadsheet objects, so what a sheet
+contains can be read — and tested — without a spreadsheet in the picture. The
+arithmetic they share lives on `Field`, so a sheet and its index row cannot
+disagree about how many values were used or how many declared ones never
+occurred.
+
+```bash
+uv sync --all-groups     # set up the environment
+uv run pytest            # tests
+uv run tox               # everything CI runs: format, lint, mypy, tests
+uv run ruff format .     # apply formatting
+```
+
+CI runs the same tox environments on every push and pull request.
+
+### Releasing
+
+Versioning is handled by
+[release-please](https://github.com/googleapis/release-please) from
+[Conventional Commits](https://www.conventionalcommits.org/), so commit messages
+decide the next version:
+
+| Commit prefix | Effect |
+|---|---|
+| `fix: ...` | patch release |
+| `feat: ...` | minor release |
+| `feat!: ...` or a `BREAKING CHANGE:` footer | major release |
+| `chore: ...`, `docs: ...`, `test: ...` | no release |
+
+Merging to `main` opens or updates a release PR that bumps the version in
+`pyproject.toml` and writes `CHANGELOG.md`. Merging that PR tags the release
+(`v1.2.0`), which is what sites should install and what the `script_version`
+field of every report then reports back. Nothing is published to PyPI; installs
+go straight from the git tag.

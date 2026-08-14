@@ -1,10 +1,16 @@
 # survey output — may contain site-specific values, never commit
 grz-survey-*.json
-schema-usage.xlsx
+schema-usage.ods
 *.sqlite
 *.db
 
 __pycache__/
 *.py[cod]
 .venv/
+.tox/
+dist/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
 .DS_Store
