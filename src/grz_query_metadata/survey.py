@@ -189,6 +189,11 @@ def resolve_grz_id(seen: collections.Counter[str], override: str | None = None) 
 def as_url(value: str) -> str:
     """Accept either a SQLAlchemy URL or a plain path to a SQLite file."""
     if "://" in value:
+        # Plain postgresql:// would make SQLAlchemy look for psycopg2; we ship
+        # psycopg 3 (the driver grz-db pins), so route to its dialect. An
+        # explicit +driver in the URL is left untouched.
+        if value.startswith("postgresql://"):
+            return "postgresql+psycopg://" + value.removeprefix("postgresql://")
         return value
     path = os.path.abspath(os.path.expanduser(value))
     if not os.path.exists(path):

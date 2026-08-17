@@ -13,6 +13,11 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "sqlalchemy>=2",
+    # SQLAlchemy loads the DBAPI driver at connect time, so the PostgreSQL one
+    # must ship even though nothing imports it (SQLite's driver is stdlib).
+    # psycopg 3, same pin as grz-db, so the GRZ sites see one driver ecosystem;
+    # as_url() routes plain postgresql:// URLs to this dialect.
+    "psycopg[binary]~=3.2",
     "pyyaml",
     "odfpy",
 ]

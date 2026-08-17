@@ -66,8 +66,13 @@ this reminder on every run.
 
 This is a Python package managed with [uv](https://docs.astral.sh/uv/). uv is
 the only thing you need to install yourself; it fetches a suitable Python
-(3.12+) and the dependencies (`sqlalchemy`, `PyYAML`, `odfpy`) into an
-isolated environment, so nothing is added to your `grz_tools` installation.
+(3.12+) and the dependencies (`sqlalchemy`, `psycopg[binary]`, `PyYAML`,
+`odfpy`) into an isolated environment, so nothing is added to your `grz_tools`
+installation. The PostgreSQL driver is included deliberately — SQLite works out
+of the box either way, but a site whose submission database is PostgreSQL must
+not discover a missing driver at the moment it connects — and it is psycopg 3
+with the same version pin as `grz-db`, so the sites see one driver ecosystem.
+Plain `postgresql://` URLs are routed to it automatically.
 
 The quickest way to run a pinned version without installing anything
 permanently:

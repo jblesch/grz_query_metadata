@@ -82,8 +82,17 @@ class TestDump:
 
 
 class TestAsUrl:
-    def test_passes_through_sqlalchemy_urls(self):
-        assert mod.as_url("postgresql://user@host/db") == "postgresql://user@host/db"
+    def test_plain_postgresql_urls_are_routed_to_the_psycopg_dialect(self):
+        # We ship psycopg 3 (grz-db's pin); a bare postgresql:// would make
+        # SQLAlchemy look for psycopg2 instead.
+        assert mod.as_url("postgresql://user@host/db") == "postgresql+psycopg://user@host/db"
+
+    def test_an_explicit_driver_in_the_url_is_left_untouched(self):
+        assert mod.as_url("postgresql+psycopg://u@h/db") == "postgresql+psycopg://u@h/db"
+        assert mod.as_url("postgresql+psycopg2://u@h/db") == "postgresql+psycopg2://u@h/db"
+
+    def test_non_postgresql_urls_pass_through(self):
+        assert mod.as_url("sqlite:////tmp/x.sqlite") == "sqlite:////tmp/x.sqlite"
 
     def test_wraps_an_existing_path(self, tmp_path):
         p = tmp_path / "submission.db.sqlite"
@@ -99,11 +108,11 @@ class TestResolveDbUrl:
     def test_reads_a_grz_config_file(self, tmp_path):
         cfg = tmp_path / "config.yaml"
         cfg.write_text("db:\n  database_url: postgresql://user@host/grzdb\n")
-        assert mod.resolve_db_url(config_file=str(cfg)) == "postgresql://user@host/grzdb"
+        assert mod.resolve_db_url(config_file=str(cfg)) == "postgresql+psycopg://user@host/grzdb"
 
     def test_db_url_wins_over_a_config_file(self, tmp_path):
         assert mod.resolve_db_url("postgresql://user@host/db", "/nonexistent.yaml") == (
-            "postgresql://user@host/db"
+            "postgresql+psycopg://user@host/db"
         )
 
     def test_exits_when_the_config_has_no_url(self, tmp_path):
