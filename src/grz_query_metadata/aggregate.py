@@ -24,6 +24,7 @@ from __future__ import annotations
 import argparse
 import collections
 import json
+import logging
 import re
 import sys
 from collections.abc import Iterable
@@ -34,9 +35,11 @@ from typing import Any
 
 from odf.opendocument import OpenDocumentSpreadsheet
 
-from . import __version__, ods
+from . import __version__, ods, setup_cli_logging
 from .fields import ENUM_FIELDS, FREETEXT_FIELDS
 from .schema import declared_enum, enum_paths
+
+log = logging.getLogger(__name__)
 
 
 def normalise(v: str) -> str:
@@ -138,16 +141,17 @@ def load_declared(schema_path: Path) -> dict[str, list[str]]:
         try:
             found = declared_enum(schema_root, schema_path.parent, mpath)
         except (KeyError, IndexError, ValueError, OSError, json.JSONDecodeError) as e:
-            print(f"warning: could not walk the schema for {label}: {e!r}", file=sys.stderr)
+            log.warning("could not walk the schema for %s: %r", label, e)
             found = None
         if found:
             declared[label] = found
     absent = sorted(set(ENUM_FIELDS) - set(declared))
     if absent:
-        print(
-            f"note: no enum declared in {schema_path.name} for {len(absent)} surveyed "
-            f"field(s): {', '.join(absent)}",
-            file=sys.stderr,
+        log.info(
+            "note: no enum declared in %s for %d surveyed field(s): %s",
+            schema_path.name,
+            len(absent),
+            ", ".join(absent),
         )
 
     # The reverse check: enums the schema declares at paths the survey never
@@ -157,13 +161,14 @@ def load_declared(schema_path: Path) -> dict[str, list[str]]:
     try:
         unsurveyed = sorted(set(enum_paths(schema_root, schema_path.parent)) - surveyed)
     except (KeyError, IndexError, ValueError, OSError, json.JSONDecodeError) as e:
-        print(f"warning: could not scan {schema_path.name} for unsurveyed enums: {e!r}", file=sys.stderr)
+        log.warning("could not scan %s for unsurveyed enums: %r", schema_path.name, e)
         unsurveyed = []
     if unsurveyed:
-        print(
-            f"warning: {schema_path.name} declares enums at {len(unsurveyed)} path(s) the "
-            f"survey does not cover: {', '.join(unsurveyed)}",
-            file=sys.stderr,
+        log.warning(
+            "%s declares enums at %d path(s) the survey does not cover: %s",
+            schema_path.name,
+            len(unsurveyed),
+            ", ".join(unsurveyed),
         )
     return declared
 
@@ -485,6 +490,7 @@ def build_spreadsheet(reports: list[dict], fields: list[Field]) -> OpenDocumentS
 
 def main(argv: list[str] | None = None) -> None:
     args = build_parser().parse_args(argv)
+    setup_cli_logging()
 
     reports = load_reports(args.reports)
     vocabs = load_vocabs(args.vocab)
@@ -504,19 +510,21 @@ def main(argv: list[str] | None = None) -> None:
 
     build_spreadsheet(reports, fields).save(args.out)
 
-    print(f"wrote {args.out}: {len(fields)} field sheets from {len(reports)} GRZ report(s)")
+    log.info("wrote %s: %d field sheets from %d GRZ report(s)", args.out, len(fields), len(reports))
     for label in vocabs:
-        print(f"  vocabulary coverage checked for {label}")
+        log.info("  vocabulary coverage checked for %s", label)
     if declared and schema_path:
         unused_by_field = {f.label: f.unused for f in fields if f.declared}
         total_unused = sum(len(u) for u in unused_by_field.values())
-        print(
-            f"  checked {len(declared)} enum(s) against {schema_path.name}: "
-            f"{total_unused} declared value(s) never used"
+        log.info(
+            "  checked %d enum(s) against %s: %d declared value(s) never used",
+            len(declared),
+            schema_path.name,
+            total_unused,
         )
         for label, unused in sorted(unused_by_field.items()):
             if unused:
-                print(f"    {label}: {', '.join(unused)}")
+                log.info("    %s: %s", label, ", ".join(unused))
 
 
 if __name__ == "__main__":

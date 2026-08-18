@@ -24,6 +24,7 @@ import argparse
 import collections
 import datetime
 import json
+import logging
 import os
 import sys
 from collections.abc import Iterable
@@ -33,8 +34,10 @@ from typing import Any
 import yaml
 from sqlalchemy import create_engine, text
 
-from . import __version__
+from . import __version__, setup_cli_logging
 from .fields import BTO_ID, ENUM_FIELDS, FREETEXT_FIELDS, split_segment
+
+log = logging.getLogger(__name__)
 
 Counters = dict[str, collections.Counter[str]]
 
@@ -265,6 +268,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> None:
     args = build_parser().parse_args(argv)
+    setup_cli_logging()
 
     db_url = resolve_db_url(args.db_url, args.config_file)
     result = survey(db_url)
@@ -278,14 +282,11 @@ def main(argv: list[str] | None = None) -> None:
         # The report is built deterministically, so the file diffs fine as is.
         json.dump(report, fh, indent=2, ensure_ascii=False)
 
-    print(f"reporting as {grz_id} (from {source})")
-    print(f"{result.n_with_metadata} of {result.n_rows} submissions had metadata; wrote {out}")
+    log.info("reporting as %s (from %s)", grz_id, source)
+    log.info("%d of %d submissions had metadata; wrote %s", result.n_with_metadata, result.n_rows, out)
     if result.n_unparseable:
-        print(
-            f"warning: {result.n_unparseable} rows had metadata that could not be parsed",
-            file=sys.stderr,
-        )
-    print(
+        log.warning("%d rows had metadata that could not be parsed", result.n_unparseable)
+    log.info(
         "\nOpen the file and read it before you share it. The freetext_fields section "
         "contains the values themselves, and labDataName in particular is free text "
         "that could name a person. Delete anything that should not leave your site."

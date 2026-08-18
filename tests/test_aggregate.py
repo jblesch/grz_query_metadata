@@ -340,15 +340,15 @@ class TestSpreadsheet:
 
 
 class TestSchemaLoading:
-    def test_a_dangling_ref_degrades_to_a_warning_not_a_crash(self, tmp_path, capsys):
+    def test_a_dangling_ref_degrades_to_a_warning_not_a_crash(self, tmp_path, caplog):
         schema = tmp_path / "grz-schema.json"
         schema.write_text(
             json.dumps({"properties": {"submission": {"$ref": "#/$defs/Gone"}}}), encoding="utf-8"
         )
         assert mod.load_declared(schema) == {}
-        assert "could not walk the schema" in capsys.readouterr().err
+        assert "could not walk the schema" in caplog.text
 
-    def test_schema_enums_the_survey_misses_are_warned_about(self, tmp_path, capsys):
+    def test_schema_enums_the_survey_misses_are_warned_about(self, tmp_path, caplog):
         schema = tmp_path / "grz-schema.json"
         schema.write_text(
             json.dumps(
@@ -366,6 +366,5 @@ class TestSchemaLoading:
             encoding="utf-8",
         )
         mod.load_declared(schema)
-        err = capsys.readouterr().err
-        assert "does not cover" in err
-        assert "submission/brandNewField" in err
+        assert "does not cover" in caplog.text
+        assert "submission/brandNewField" in caplog.text
