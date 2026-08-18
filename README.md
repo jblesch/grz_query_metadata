@@ -78,13 +78,13 @@ The quickest way to run a pinned version without installing anything
 permanently:
 
 ```bash
-uvx --from git+https://github.com/jblesch/grz_query_metadata@v1.1.0 grz-survey-metadata --help  # x-release-please-version
+uvx --from git+https://github.com/jblesch/grz_query_metadata@v2.0.0 grz-survey-metadata --help  # x-release-please-version
 ```
 
 To install the two commands onto your PATH instead:
 
 ```bash
-uv tool install git+https://github.com/jblesch/grz_query_metadata@v1.1.0  # x-release-please-version
+uv tool install git+https://github.com/jblesch/grz_query_metadata@v2.0.0  # x-release-please-version
 ```
 
 (The `x-release-please-version` markers keep the pinned tag current: every
